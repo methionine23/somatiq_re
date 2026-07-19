@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "somatiq-re"
+version = "0.0.1"
+description = "Somatic repeat-expansion index from short-read Illumina WGS/WES (prancSTR-first)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "somatiq_re" }]
+# Core logic is stdlib-only so it is testable without the bioinformatics stack.
+# Optional extras pull in the heavy/binary-adjacent deps used at runtime.
+dependencies = []
+
+[project.optional-dependencies]
+cram = ["pysam>=0.22"]
+parquet = ["pandas>=2.0", "pyarrow>=14"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+somatiq = "somatiq.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+somatiq = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,59 @@
+{
+  "genome_build": "GRCh38",
+  "chrom_style": "chr",
+  "_comment": "Coordinates/motifs from the Illumina ExpansionHunter GRCh38 catalog. ref_motif is the reference-strand unit (what HipSTR ALT sequences use); disease_motif is the conventional strand. hipstr_region.ref_copies are derived (region_len/period) and MUST be validated against known genotypes before a locus is trusted (see docs/P0_SPEC.md 3.1). chrom carries the 'chr' prefix; strip via --chr-style if the reference is unprefixed.",
+  "loci": [
+    {
+      "locus_id": "TCF4",
+      "disease": "Fuchs endothelial corneal dystrophy (CTG18.1)",
+      "chrom": "chr18",
+      "ref_region": {"start": 55586155, "end": 55586227, "base": 1},
+      "ref_motif": "CAG",
+      "disease_motif": "CTG",
+      "period": 3,
+      "ploidy": "diploid",
+      "eh_variant_id": "TCF4",
+      "hipstr_region": {"start": 55586154, "end": 55586227, "period": 3, "ref_copies": 24, "name": "TCF4"},
+      "interruption": {"motifs": [], "position": null, "pure_tract": "CAG", "notes": "interruptions reported in some expanded alleles"}
+    },
+    {
+      "locus_id": "AR",
+      "disease": "Spinal and bulbar muscular atrophy (Kennedy)",
+      "chrom": "chrX",
+      "ref_region": {"start": 67545316, "end": 67545385, "base": 1},
+      "ref_motif": "GCA",
+      "disease_motif": "CAG",
+      "period": 3,
+      "ploidy": "sex_dependent",
+      "eh_variant_id": "AR",
+      "hipstr_region": {"start": 67545315, "end": 67545385, "period": 3, "ref_copies": 23, "name": "AR"},
+      "interruption": {"motifs": [], "position": null, "pure_tract": "GCA", "notes": "usually pure; hemizygous in males"}
+    },
+    {
+      "locus_id": "DMPK",
+      "disease": "Myotonic dystrophy type 1 (DM1)",
+      "chrom": "chr19",
+      "ref_region": {"start": 45770204, "end": 45770264, "base": 1},
+      "ref_motif": "CAG",
+      "disease_motif": "CTG",
+      "period": 3,
+      "ploidy": "diploid",
+      "eh_variant_id": "DMPK",
+      "hipstr_region": {"start": 45770203, "end": 45770264, "period": 3, "ref_copies": 20, "name": "DMPK"},
+      "interruption": {"motifs": ["CCG", "CTC", "GGC"], "position": "3prime", "pure_tract": "CAG", "notes": "DMPK variant repeats at 3' end modulate instability (ref-strand units)"}
+    },
+    {
+      "locus_id": "ATXN7",
+      "disease": "Spinocerebellar ataxia type 7 (SCA7)",
+      "chrom": "chr3",
+      "ref_region": {"start": 63912684, "end": 63912714, "base": 1},
+      "ref_motif": "GCA",
+      "disease_motif": "CAG",
+      "period": 3,
+      "ploidy": "diploid",
+      "eh_variant_id": "ATXN7",
+      "hipstr_region": {"start": 63912683, "end": 63912714, "period": 3, "ref_copies": 10, "name": "ATXN7"},
+      "interruption": {"motifs": ["GCC"], "position": "3prime", "pure_tract": "GCA", "notes": "EH structure (GCA)*(GCC)+; validate HipSTR region (compound-tract risk)"}
+    }
+  ]
+}

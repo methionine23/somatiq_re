@@ -335,7 +335,8 @@ only coarse bounds — report the ceiling per read‑length, never silently trun
 
 ## 9. Phased roadmap
 - **P0** — catalog format + pysam region fetch + per‑read spanning‑read sizing for
-  HTT‑CAG; raw histogram out. (Prove the substrate.)
+  **TCF4** (primary target; add AR/DMPK/ATXN7 to the catalog); raw histogram out,
+  cross‑checked against the existing EH realigned BAM (FE‑2). (Prove the substrate.)
 - **P1** — QC/artifact filters + stutter deconvolution + expansion index + depth
   normalization. (Prove the metric.)
 - **P2** — mosaic‑fraction mixture MLE + p‑value; sensitivity/depth calibration on

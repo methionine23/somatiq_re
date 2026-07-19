@@ -74,6 +74,22 @@ histogram from WGS is exactly such a distribution**, with read counts replacing
 peak heights. Everything else (thresholding, normalization, offset weighting)
 transfers directly.
 
+Two related metrics come from the same CE peak table and both transfer to the
+read histogram — worth emitting both:
+- **Expansion index** — sum of normalized heights × *positive* offsets (expansion tail only).
+- **Instability index** — mean length change vs the inherited allele (signed;
+  decomposable into expansion vs contraction components).
+
+**Existing CE/GeneMapper peak‑based software (the reference implementations to
+mirror):** yes, this is already tooled on the PCR side. Most directly **TRACE**
+(*Tandem Repeats Analysis by Capillary Electrophoresis*; R package + `traceshiny`
+web app, MGH, bioRxiv 2026) takes raw fragment‑analysis files → expansion/
+instability indices end‑to‑end. Older/related: **TraceTrack** (batch CE
+processing) and the classic Monckton‑lab peak‑table "instability index" spreadsheet
+(Lee et al. 2010). **We treat TRACE's index definitions as the spec** for
+somatiq_re's histogram metrics, so a WGS index and a CE index are computed the same
+way and are directly comparable on matched samples.
+
 ### 2.2 The mosaic‑fraction / mixture view (prancSTR analog)
 Instead of (or in addition to) a summary index, model the reads as a **mixture**:
 a germline component (one or two alleles + stutter) plus a low‑frequency
@@ -199,20 +215,32 @@ essential for WES/PCR‑positive data.
 
 ## 6. Proposed design
 
-### 6.1 Two viable architectures (decision needed — see §7)
-- **A. Self‑contained pysam extractor (recommended default).** Pure‑Python (pysam)
-  targeted read fetch + our own per‑read sizing + metrics. No C++ dependency,
-  fully auditable, easy to deploy at scale, full control over QC/artifact filters.
-  Cost: we reimplement (and must validate) the sizing logic.
-- **B. Wrap an existing genotyper.** Run ExpansionHunter (best for known disease
-  loci; reuse its graph realignment) or HipSTR (emits per‑read lengths + stutter
-  model, feeds a prancSTR‑style estimator) upstream, and compute the somatic index
-  downstream. Cost: heavier deps, less control, per‑tool quirks; but reuses
-  battle‑tested sizing and (HipSTR) stutter calibration.
+### 6.1 Architecture — pluggable front‑ends, one common back‑end (decided)
+The somatic‑index/mosaic‑fraction math operates on a **common per‑read length
+table** (columns: read_id, allele‑guess, repeat_count, read_class, mapq,
+qual_across_repeat, flags). Multiple front‑ends can populate that table, so we are
+not locked to one substrate:
 
-A pragmatic path: **build A** for the somatic index and QC, but keep the per‑read
-schema **compatible with HipSTR/EH output** so B can be dropped in as an alternate
-front‑end and used for cross‑validation.
+- **FE‑1: pysam raw CRAM extraction (primary, self‑contained).** Targeted region
+  fetch + our own per‑read sizing. No C++ dependency, fully auditable, full control
+  over the QC/artifact filters, easy to scale. Cost: we reimplement + validate
+  sizing.
+- **FE‑2: parse ExpansionHunter's *realigned* BAM (fast reuse — you already have EH
+  results).** EH (with `--analysis-mode`/REViewer output) emits a realigned BAM of
+  the reads it used, with graph alignments spanning the repeat. Parsing that gives
+  per‑read repeat spans **from EH's validated realignment** — better than naïve
+  re‑extraction for reads near/over the read length, and near‑free since you have EH
+  outputs. Caveat: only reads EH retained near the locus; must be requested at EH
+  run time.
+- **FE‑3: HipSTR per‑read output (`ALLREADS`/`MALLREADS`) + its learned stutter
+  model.** Feeds a prancSTR‑style mixture estimator directly and supplies a
+  calibrated per‑locus stutter model (valuable for the PCR‑WES mode). Run HipSTR only
+  where needed.
+
+**Plan:** build FE‑1 as the reference path and **FE‑2 immediately** (reuses your
+existing EH results, and cross‑checks FE‑1's sizing on the same reads). FE‑3 is the
+stutter‑calibration/PCR‑WES helper. All three emit the identical per‑read table, so
+the back‑end and every metric are shared and front‑ends cross‑validate each other.
 
 ### 6.2 Pipeline (architecture A)
 ```
@@ -251,36 +279,59 @@ Optional: `matplotlib` for QC pileup/histogram plots. No heavy frameworks in the
 
 ---
 
-## 7. Key decisions / open questions for you
+## 7. Decisions (resolved) & v1 loci
 
-1. **Locus scope for v1** — start with HTT‑CAG only (cleanest validation, richest
-   truth data), or a small panel (HTT, ATXN1/2/3/7, DMPK, TCF4, ADGRE2)? TCF4 &
-   ADGRE2 are useful positive controls (known high blood mosaicism).
-2. **Data regime priority** — PCR‑free WGS first (recommended), or must WES/PCR‑positive
-   work in v1 (needs the stutter+base‑quality machinery up front)?
-3. **Architecture** — self‑contained pysam extractor (A, recommended) vs wrap
-   EH/HipSTR (B), vs both (A + B as cross‑check)?
-4. **Primary metric** — fragment‑analysis expansion index (continuity with HD
-   literature), prancSTR‑style mosaic fraction (statistical), or both (recommended)?
-5. **Truth/validation data** — do you have matched MiSeq/long‑read or known‑positive
-   samples (HD cohort) to calibrate against, or should v1 rely on simulation + public
-   1000G/HD WGS?
-6. **Scale target & environment** — expected CRAM count, per‑sample time budget, and
-   execution environment (local cluster / cloud / All‑of‑Us or UKB RAP)?
+**Resolved with the project owner:**
+1. **v1 loci:** TCF4, AR, DMPK, ATXN7 (table below).
+2. **Data regimes:** both PCR‑free WGS **and** PCR‑positive WES in v1 → the stutter
+   model + base‑quality artifact filter are v1 requirements, not later add‑ons.
+3. **Architecture:** self‑contained pysam (FE‑1) **plus** consume existing EH output
+   (FE‑2, the realigned BAM); run HipSTR (FE‑3) only where a calibrated stutter model
+   is needed. (See §6.1.)
+4. **Metrics:** both — the CE‑style expansion/instability index (TRACE‑compatible)
+   **and** a prancSTR‑style mosaic fraction.
+5. **Validation:** NA06075 (known mosaic DMPK control) + reproduce All of Us TCF4
+   mosaicism + an internal cohort. (See §8.)
+6. **Target:** reproduce the All of Us TCF4 somatic‑mosaicism signal, then apply to
+   the internal cohort.
+
+### v1 locus table
+| Locus | Disease | Motif | Chrom/ploidy | Typical inherited range | Notes for sizing |
+|---|---|---|---|---|---|
+| **TCF4** (CTG18.1) | Fuchs endothelial dystrophy | CTG/CAG | chr18, diploid | ~10–40 (common), 40–75+ expanded | **Primary validation target** (AoU high blood mosaicism). Common alleles fit within‑read; large pathogenic alleles exceed 150 bp reads. |
+| **AR** | SBMA (Kennedy) | CAG | chrX, **hemizygous in males** | ~9–36 | Sex‑aware ploidy: single germline mode in males (no 2nd allele anchor); diploid in females. |
+| **DMPK** | Myotonic dystrophy 1 | CTG | chr19, diploid | 5–34 normal; 35–49 premut; 50+ DM1 | **NA06075 control = 12/56/70 CTG mosaic.** 56–70 CTG ≈ 168–210 bp **> 150 bp read** → tests the read‑length ceiling; expect flanking/IRR, not clean spanning, for the expanded alleles. |
+| **ATXN7** | SCA7 | CAG | chr3, diploid | 4–33 normal; 37+ SCA7 | CAG; normal/short‑expanded alleles fit within‑read. |
+
+**Cross‑cutting sizing note:** at 2×150 bp (UKB/AoU/NovaSeq), the spanning ceiling is
+~(150−2·anchor)/motif ≈ 40–44 units. Somatic *index* in blood targets small
+increments over the modal/common allele, which fits for AR, ATXN7, and common TCF4;
+large pathogenic DMPK/TCF4 alleles (and NA06075's 56/70) fall to flanking/IRR and get
+only coarse bounds — report the ceiling per read‑length, never silently truncate.
 
 ---
 
 ## 8. Validation plan
-- **Simulation** — spike synthetic mosaic alleles at known `f` (e.g. via TRTools'
-  simuSTR or custom) into real backgrounds; recover `f` and index; establish the
-  sensitivity/depth curve.
-- **Positive controls** — HD WGS (known somatic expansion), and TCF4/ADGRE2
-  (known high blood mosaicism) vs stable control loci.
-- **Cross‑tool** — compare germline modal calls to ExpansionHunter; compare mosaic
-  calls to prancSTR on the same CRAMs.
-- **Orthogonal truth** — where available, MiSeq amplicon / long‑read on the same
-  samples.
-- **Reproducibility** — replicate CRAMs / technical duplicates; batch‑effect check.
+- **Positive control sample — NA06075** (Coriell/NIST DM1 reference, mosaic DMPK
+  **12/56/70 CTG**). Expect: germline modal ~12 called cleanly from spanning reads;
+  the 56/70 mosaic alleles exceed a 150 bp read → validates the read‑length‑ceiling
+  behavior (flanking/IRR flag rather than a false clean call). If long‑read/PCR truth
+  on NA06075 is available, compare directly.
+- **Primary reproduction target — TCF4 in All of Us.** Reproduce the AoU TCF4 blood
+  somatic‑mosaicism signal (common‑allele length mosaicism), then run the internal
+  cohort. TCF4 is a high‑mosaicism locus, so it is the strongest signal to confirm the
+  pipeline end‑to‑end.
+- **CE cross‑check** — where matched fragment‑analysis/MiSeq exists, compare the WGS
+  index to a **TRACE** index computed on the same samples (same index definition ⇒
+  apples‑to‑apples).
+- **Simulation** — spike synthetic mosaic alleles at known `f` (custom or TRTools'
+  simuSTR) into real backgrounds; recover `f`/index; establish the sensitivity‑vs‑depth
+  curve per locus and read length.
+- **Cross‑tool** — germline modal vs ExpansionHunter (FE‑2 reuse); mosaic vs prancSTR
+  (FE‑3) on the same CRAMs.
+- **WGS↔WES concordance** — for samples with both, compare indices; quantify the
+  PCR‑stutter penalty and confirm the base‑quality artifact filter closes the gap.
+- **Reproducibility** — replicate CRAMs / technical duplicates; batch/chemistry check.
 
 ## 9. Phased roadmap
 - **P0** — catalog format + pysam region fetch + per‑read spanning‑read sizing for
@@ -301,5 +352,8 @@ Optional: `matplotlib` for QC pileup/histogram plots. No heavy frameworks in the
 - Mukamel & McCarroll 2025 *Nature* (900k biobank somatic expansion); Handsaker/Kashin/Reed
   et al. 2025 *Cell*/*Nat Genet* (single‑cell HTT somatic expansion).
 - Ciosi et al. 2019 *eLife* 64674 (somatic expansion index over life); Lee et al.
-  2011/2017 (expansion index method); *Nat Med* 2024 (blood somatic CAG ↔ HD biomarkers).
+  2010/2017 (expansion index method); *Nat Med* 2024 (blood somatic CAG ↔ HD biomarkers).
+- **TRACE** 2026 bioRxiv (`traceshiny.mgh.harvard.edu`) & TraceTrack 2023 (CE peak‑based
+  SI/expansion index software — the metric spec we mirror).
 - Trost et al. 2024 *PLOS One* (STR tool comparison).
+- Kalman et al. 2013 (NIST/CDC DM1 genomic DNA reference panel; NA06075 = 12/56/70 CTG).

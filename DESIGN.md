@@ -32,13 +32,14 @@ the McCarroll single‑cell HTT work, *Cell*/*Nat Genet* 2025) show the answer i
 "yes, for small‑to‑moderate somatic increments" — this project builds a focused,
 reusable, auditable implementation of that idea.
 
-**In scope**
-- Targeted analysis at a **user‑supplied catalog of known loci** (motif + coordinates).
-- Per‑read repeat‑length estimation from CRAM/BAM.
-- A **somatic expansion index** (fragment‑analysis analog) plus a **mosaic‑fraction**
-  estimate, with rigorous QC/artifact filtering.
+**In scope** (delivered as four components over a shared library — see §10)
+- `somatiq call`: per‑sample somatic index + score from **BAM/CRAM**, in two data modes
+  (**PCR‑free WGS** and **PCR‑positive exome**), with a **native** engine and an
+  **existing‑tool** engine (HipSTR → **prancSTR**).
+- **Two‑level QC**: level‑1 per‑sample (data‑based) and level‑2 cohort‑based.
+- `somatiq cohort`: aggregate + summarize a large cohort + level‑2 QC + analysis matrix.
+- `somatiq genemapper`: a **light standalone CE/GeneMapper index** script (validation bridge).
 - A **batch runner** that scales to tens/hundreds of thousands of CRAMs.
-- PCR‑free WGS as the primary target; a PCR/stutter‑aware mode for WES/amplicon.
 
 **Out of scope (at least v1)**
 - De novo discovery of unknown expanded loci (that is EHdn/STRling territory).
@@ -232,15 +233,23 @@ not locked to one substrate:
   re‑extraction for reads near/over the read length, and near‑free since you have EH
   outputs. Caveat: only reads EH retained near the locus; must be requested at EH
   run time.
-- **FE‑3: HipSTR per‑read output (`ALLREADS`/`MALLREADS`) + its learned stutter
-  model.** Feeds a prancSTR‑style mixture estimator directly and supplies a
-  calibrated per‑locus stutter model (valuable for the PCR‑WES mode). Run HipSTR only
-  where needed.
+- **FE‑3: HipSTR + prancSTR (the "existing‑tool" somatic engine).** prancSTR is
+  packaged in **TRTools** (`pip install trtools`) and is **HipSTR‑only** — it reads
+  HipSTR's per‑locus stutter parameters (INFO `INFRAME_UP`/`INFRAME_DOWN`/
+  `INFRAME_PGEOM`) and the per‑read `MALLREADS` FORMAT field, and cannot consume
+  ExpansionHunter output. So this path = **run HipSTR (ideally jointly across the
+  cohort so it learns the stutter model) → run prancSTR per sample** → mosaic
+  fraction `f`, mosaic allele, and a p‑value for `f=0`. It gives us a peer‑reviewed
+  somatic estimator "for free" and the calibrated stutter model the PCR‑exome mode
+  needs; `simTR` (same package) is our read simulator for validation. Power best at
+  `f≈10–20%` @ 30–50×, floor ~7%.
 
-**Plan:** build FE‑1 as the reference path and **FE‑2 immediately** (reuses your
-existing EH results, and cross‑checks FE‑1's sizing on the same reads). FE‑3 is the
-stutter‑calibration/PCR‑WES helper. All three emit the identical per‑read table, so
-the back‑end and every metric are shared and front‑ends cross‑validate each other.
+**Plan:** build FE‑1 as the reference path and **FE‑2** (reuses your existing EH
+results, cross‑checks FE‑1's sizing on the same reads — note EH feeds *our* sizing,
+**not** prancSTR). FE‑3 is the existing‑tool somatic engine and the stutter‑calibration
+source for PCR‑exome. FE‑1/FE‑2 emit the identical per‑read table (shared back‑end);
+FE‑3 runs as a parallel engine whose `f`/p‑value are merged into the same output row
+for cross‑validation against our native index.
 
 ### 6.2 Pipeline (architecture A)
 ```
@@ -333,19 +342,89 @@ only coarse bounds — report the ceiling per read‑length, never silently trun
   PCR‑stutter penalty and confirm the base‑quality artifact filter closes the gap.
 - **Reproducibility** — replicate CRAMs / technical duplicates; batch/chemistry check.
 
-## 9. Phased roadmap
-- **P0** — catalog format + pysam region fetch + per‑read spanning‑read sizing for
-  **TCF4** (primary target; add AR/DMPK/ATXN7 to the catalog); raw histogram out,
-  cross‑checked against the existing EH realigned BAM (FE‑2). (Prove the substrate.)
-- **P1** — QC/artifact filters + stutter deconvolution + expansion index + depth
-  normalization. (Prove the metric.)
-- **P2** — mosaic‑fraction mixture MLE + p‑value; sensitivity/depth calibration on
-  simulation. (Prove the statistics.)
-- **P3** — batch runner, Parquet aggregation, multi‑locus panel, WES/PCR mode.
-  (Prove the scale.)
-- **P4** — cross‑tool/orthogonal validation + docs. (Prove it's right.)
+## 9. Phased roadmap (component‑oriented)
+- **P0 — substrate.** `somatiq` shared lib + catalog (TCF4 primary; AR/DMPK/ATXN7) +
+  `somatiq call` native engine (FE‑1 pysam sizing, WGS mode) → raw histogram, cross‑checked
+  against the existing EH realigned BAM (FE‑2).
+- **P1 — the score + level‑1 QC.** Base‑quality artifact filter + stutter deconvolution +
+  expansion/instability index + depth normalization + per‑sample **level‑1 QC** flags.
+- **P2 — existing‑tool engine + stats.** FE‑3 wrapper (HipSTR → prancSTR) merged into the
+  output row; `simTR`‑based sensitivity/depth calibration; native‑vs‑prancSTR concordance.
+- **P3 — exome mode + scale.** `--mode exome` (learned stutter, dropout‑aware) + the batch
+  runner (parallel, resumable, Parquet).
+- **P4 — cohort tool + level‑2 QC.** `somatiq cohort`: aggregation, **level‑2 QC**,
+  covariate regression, control/replicate tracking, analysis‑ready matrix — used to
+  reproduce AoU‑TCF4 and run the internal cohort.
+- **P5 — CE bridge + validation + docs.** `somatiq genemapper` (light CE index) + orthogonal
+  validation (NA06075, CE↔WGS, WGS↔WES concordance) + documentation.
 
-## 10. Key references
+## 10. Tightened scope — components & deliverables
+
+The project decomposes into **four deliverables over one shared library**. Each maps
+to the requirements gathered with the owner (numbered ⟨1⟩–⟨6⟩ below).
+
+### 10.0 `somatiq` shared library
+Catalog model, the common per‑read length table, sizing, stutter model, and the
+metric functions — imported by all commands so a WGS index, an exome index, and a CE
+index are computed identically.
+
+### 10.1 `somatiq call` — per‑sample somatic analysis + score  ⟨1⟩⟨2⟩⟨3⟩
+- **Input:** one BAM/CRAM + reference + catalog. **Two data modes:**
+  `--mode wgs` (PCR‑free; low fixed stutter, base‑quality artifact filter on) and
+  `--mode exome` (PCR‑positive capture; large length‑dependent stutter → **requires a
+  learned/supplied stutter model**, uneven/again depth‑gated, allelic‑dropout aware). ⟨2⟩
+- **Two engines, merged into one output row:**
+  - `native` — FE‑1 pysam sizing (+ optional FE‑2 EH‑BAM cross‑check) → our
+    expansion/instability index + a lightweight mixture `f`.
+  - `prancstr` — FE‑3: run HipSTR then prancSTR → `f`, mosaic allele, p‑value. ⟨3⟩
+    (For exome, this is the preferred `f` because HipSTR supplies the PCR stutter model.)
+- **Output:** per‑sample × locus row (germline allele(s), depth, read‑class counts,
+  expansion_index, instability_index, native_f, prancstr_f, p‑value, tail stats) +
+  **level‑1 QC** (§10.3) + optional per‑read dump and QC plot. The "score" ⟨1⟩ is the
+  index/`f` pair, always reported with its QC flag and germline length.
+
+### 10.2 `somatiq cohort` — cohort summarization + level‑2 QC  ⟨5⟩
+- **Input:** the directory/manifest of per‑sample outputs (Parquet).
+- **Does:** aggregate to one analysis matrix; run **level‑2 QC** (§10.3); regress the
+  index on covariates (`index ~ germline_length + age + sex + batch`) and report
+  residual outliers; per‑locus distributions, control‑sample tracking, replicate
+  concordance; emit a cohort QC report (tables + plots) and an **analysis‑ready,
+  GWAS‑friendly matrix**. Also writes level‑2 flags back per sample.
+- This is where the AoU‑TCF4 reproduction and the internal‑cohort run are actually
+  scored and compared.
+
+### 10.3 Two‑level QC  ⟨4⟩
+**Level 1 — per‑sample, data‑based** (computed in `somatiq call`, gates each sample×locus):
+- locus coverage & **spanning‑read depth**; effective reads after filters (sets the
+  mosaic‑fraction floor); stutter goodness‑of‑fit residual; strand balance;
+  MAPQ / off‑target / secondary‑supplementary rate; **base‑quality binning detection**
+  (weakens the artifact filter → downgrade); PCR‑artifact read fraction (McCarroll);
+  duplicate rate; germline‑call confidence; interruption flag. → `PASS/WARN/FAIL` +
+  a hard min‑depth gate.
+
+**Level 2 — cohort‑based** (computed in `somatiq cohort`, needs the whole cohort):
+- **control‑sample drift** (NA06075 index within tolerance across batches);
+  **replicate/technical‑duplicate concordance**; **batch / plate / center / flowcell
+  effects** on the index; **index ~ germline‑length + age** regression → flag residual
+  outliers; per‑locus index‑distribution outliers; **stutter‑model consistency** across
+  the cohort; **sex‑check for AR** (hemizygous males); PCA of per‑locus stutter/index
+  to surface hidden structure. → cohort QC report + per‑sample level‑2 flags.
+
+### 10.4 `somatiq genemapper` — light CE / GeneMapper index  ⟨6⟩
+- **Input:** a GeneMapper **peak/fragment export** (tab/CSV) — the one with `Sample`,
+  `Marker`, `Size`, `Height` (± `Area`) per peak. (The plain "Genotypes table" with
+  only Allele‑N columns has **no heights** and is insufficient — the script validates
+  this and errors clearly.)
+- **Does:** per marker, calibrate fragment `Size` → repeat units
+  (`n = round((size − offset)/motif_len)`), pick the modal peak, apply a relative
+  peak‑height threshold (default **10%**), compute **expansion_index** and
+  **instability_index** exactly as in §2.1 — **TRACE‑compatible** so CE and WGS indices
+  are directly comparable on matched samples.
+- **Deliberately lightweight & standalone:** `pandas`/`numpy` only, no pysam — it is
+  the orthogonal‑truth bridge for validation (§8), runnable without the sequencing
+  stack.
+
+## 11. Key references
 - Dolzhenko et al. 2017 *Genome Res* (ExpansionHunter, PCR‑free long expansions);
   2019 *Bioinformatics* (sequence‑graph EH); 2020 *Genome Biol* (EHdn); 2022 (REViewer).
 - Mousavi et al. 2019 *NAR* (GangSTR). Willems et al. 2017 *Nat Methods* (HipSTR).

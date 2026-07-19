@@ -177,6 +177,28 @@ signature are excluded before building the histogram — this is what lets plain
 distinguish *biological* somatic expansion from *artefactual* length changes, and is
 essential for WES/PCR‑positive data.
 
+### 4.6 Repeat interruptions (structure, not just length)
+Many pathogenic repeats carry sequence **interruptions** that change instability:
+HTT (3′ `CAACAG`/`CCG`; loss‑of‑interruption → earlier onset), ATXN1 (`CAT`), FMR1
+(`AGG` in the `CGG` tract), and — within our v1 set — DMPK "variant repeats"
+(`CCG`/`CTC`/`GGC` at the 3′ end) and TCF4. The uninterrupted (pure) tract, not the
+total motif count, is what drives somatic expansion ("CAG‑not‑polyQ" timing). So
+interruptions get three roles:
+- **Somatic covariate/flag (high value).** Report per‑allele interruption structure and
+  **loss‑of‑interruption**, and correlate with `f` in the cohort tool (`index ~ … +
+  interruption_status`). Loss of interruption is itself a somatic event of interest.
+- **Sizing correctness.** The expandable unit is the *pure* tract. HipSTR genotypes allele
+  **sequences** (REF/ALT), so interruptions can be **detected/flagged cheaply from HipSTR
+  ALT** even in the prancSTR path; **interruption‑aware sizing** (counting the pure tract,
+  calling loss‑of‑interruption) is native‑engine (P4) work.
+- **Anchor‑extension (advanced, native P4).** A fixed interruption near one repeat end is
+  an internal landmark: a read capturing that junction + partial tract can be placed
+  without the opposite unique flank, **modestly extending usable reads for structured
+  loci** (e.g. HTT 3′) — not a general ceiling fix for pure tracts (AR/ATXN7).
+
+Catalog carries an interruption model per locus (§ P0 spec §3): `interruption_motifs`,
+expected position/structure, and `pure_tract` definition.
+
 ---
 
 ## 5. Core challenges & confounders (short‑read WGS/WES specifics)

@@ -12,7 +12,9 @@ control.
 3. Recovers a known mosaic fraction on **simTR**‑simulated data within tolerance (§6.1).
 4. On **NA06075** (real control), calls the DMPK short germline allele and **flags the
    read‑length ceiling** for the 56/70 CTG alleles rather than mis‑calling them (§6.2).
-5. Minimal **level‑1 QC** flags attached to every row (§4).
+5. Minimal **level‑1 QC** flags attached to every row (§4), incl. `interruption_flag`.
+6. Ships as a **portable container** (pinned HipSTR + TRTools/prancSTR + EH + samtools) so
+   it runs in the owner's cloud where the CRAMs live.
 
 **Explicitly NOT in P0** (later phases): exome mode (P2), `somatiq cohort` + level‑2 QC
 (P1), native pysam engine (P4), `somatiq genemapper` (P3). P0 is the thin, correct
@@ -39,6 +41,7 @@ somatiq_re/
 ├── DESIGN.md
 ├── docs/P0_SPEC.md            # this file
 ├── pyproject.toml
+├── Dockerfile                 # pinned HipSTR + TRTools/prancSTR + EH + samtools
 ├── catalogs/somatiq_grch38.json
 ├── src/somatiq/
 │   ├── catalog.py             # load/validate catalog
@@ -81,9 +84,21 @@ Per‑locus JSON fields:
   "ploidy": "diploid",
   "eh_variant_id": "DMPK",
   "hipstr_region": {"start": 45770203, "end": 45770264, "period": 3, "ref_copies": 20, "name": "DMPK"},
+  "interruption": {
+    "motifs": ["CCG", "CTC", "GGC"],
+    "position": "3prime",
+    "pure_tract": "CTG",
+    "notes": "DMPK variant repeats at 3' end; loss/gain modulates instability"
+  },
   "notes": "NA06075 control = 12/56/70 CTG; 56/70 exceed a 150bp read"
 }
 ```
+**Interruption model** (per locus, used from P0 for *annotation*, from P4 for
+*sizing*): `interruption.motifs` (non‑canonical units to expect), `position`,
+`pure_tract` (the expandable motif). P0 detects interruptions from HipSTR ALT
+sequences and sets `interruption_flag`; P4 (native engine) does interruption‑aware
+pure‑tract sizing, loss‑of‑interruption calling, and anchor‑extension. Priority
+interruption‑bearing loci to add when expanding the catalog: **HTT, ATXN1, FMR1**.
 - **AR ploidy** resolved per sample from provided sex (male → hemizygous, single germline
   mode; female → diploid). Sex source = sample manifest column (P0) — no inference.
 - **ATXN7** has a compound `(GCA)*(GCC)+` structure in EH; for P0 HipSTR we treat the
@@ -143,7 +158,9 @@ Merge + level-1 QC             → score row (§5)
 | **prancstr_f** | prancSTR | **the P0 score** |
 | prancstr_mosaic_allele, prancstr_pval | prancSTR | |
 | informative_reads, detectable_f_floor | MALLREADS / `1/n` | power |
+| read_length | locus reads (§4ter) | per‑sample, no full scan |
 | allele_exceeds_readlen | derived | ceiling flag |
+| interruption_flag, interruption_seq | HipSTR ALT scan | non‑canonical units in allele |
 | qc_level1, qc_reasons | §4 qc.py | PASS/WARN/FAIL + reasons |
 | eh_carrier, eh_gt_long | Stage 0 (if run) | optional |
 
@@ -154,8 +171,23 @@ Merge + level-1 QC             → score row (§5)
 - **germline Q** below threshold → WARN/FAIL.
 - **allele_exceeds_readlen**: germline or mosaic allele bp > detected read length → flag
   (prancSTR `f` unreliable for that allele; the honest NA06075 outcome).
-- **base‑quality binning detection** (read the CRAM quality histogram): binned → note that
-  the future McCarroll artifact filter is weakened (informational in P0).
+- **base‑quality binning detection** (from the locus reads, not a full scan): binned →
+  note that the future McCarroll artifact filter is weakened (informational in P0).
+- **interruption_flag**: HipSTR ALT sequence contains non‑canonical units (per catalog
+  `interruption.motifs`) → annotate; correlation with `f` is a cohort‑tool (P1) job.
+
+## 4ter. Targeted access & read‑length (cost control)
+The pipeline is **targeted — the full CRAM is never scanned.** Per sample we touch only:
+the CRAM **header**, the **`.crai` index**, and the **slices overlapping the 4 loci**
+(HipSTR reads only the region file; EH triage seeks the catalog). Egress ≈ header +
+index + ~4 small slices (tens of KB), not the multi‑GB CRAM.
+- **`read_length` is derived from the reads already pulled at the loci** (mode of observed
+  lengths) — **no separate probe, no first‑N‑records scan.** Reported per sample; feeds
+  `allele_exceeds_readlen`.
+- **Requirements to keep access cheap in the owner's cloud:** the **`.crai` must be
+  co‑located** with each CRAM, and the **reference FASTA (or refget)** must be reachable
+  for CRAM decode. Without a local `.crai`, random access degrades — validate this at
+  deploy time.
 
 ## 6. Validation harness
 ### 6.1 simTR synthetic truth (primary, always available)
@@ -165,26 +197,37 @@ Merge + level-1 QC             → score row (§5)
   `f ≥ 0.10` at 30–50×; `f=0` yields non‑significant p‑values at the target FPR. Produces
   the per‑locus sensitivity‑vs‑depth curve.
 
-### 6.2 NA06075 real control (DMPK 12/56/70 CTG)
-- **Prerequisite:** obtain a PCR‑free WGS CRAM of NA06075 (confirm availability; if none,
-  6.2 is deferred and 6.1 stands as the P0 gate).
-- 12 CTG = 36 bp (spannable); **56/70 CTG = 168/210 bp exceed a 150 bp read**.
-- **Acceptance:** pipeline calls the ~12 germline allele from spanning reads and raises
-  `allele_exceeds_readlen` for the expanded alleles instead of a false clean call —
-  i.e. correct, honest ceiling behavior. If 250 bp‑read data exists, expect partial
-  recovery of the larger alleles.
+**simTR is the P0 acceptance gate in this dev environment** (real CRAMs live in the
+owner's cloud — see §6.2). ⟨resolved: pt 2⟩
+
+### 6.2 NA06075 / cohort — real‑data validation runs in the owner's cloud
+- The owner's data (NA06075, internal cohort) is in **another cloud**; CRAMs are **not
+  egressed here**. Therefore P0 is developed/tested against simTR here and **deployed as a
+  portable container** (pinned HipSTR + TRTools/prancSTR + EH + samtools) to run where the
+  data lives. Containerization is a **P0 deliverable**.
+- NA06075 expectation when run there (DMPK 12/56/70 CTG): 12 CTG = 36 bp (spannable);
+  **56/70 CTG = 168/210 bp exceed a 150 bp read** → the pipeline calls the ~12 germline
+  allele and raises `allele_exceeds_readlen` for the expanded alleles rather than a false
+  clean call (honest ceiling behavior).
 
 ## 7. CLI surface (P0)
 - `somatiq call --cram X.cram --ref ref.fa --catalog cat.json --sex M --out X.parquet [--triage] [--hipstr-batch manifest.tsv]`
 - `somatiq validate-sim --catalog cat.json --out simreport/` (runs 6.1)
 - `somatiq catalog-check --catalog cat.json --ref ref.fa` (validates HipSTR regions vs known genotypes)
 
-## 8. Open items / assumptions to confirm at sign‑off
-1. **HipSTR region defs** for the 4 loci must be generated and validated (§3.1) — ATXN7
-   compound structure and AR strand are the flagged risks.
-2. **NA06075 WGS CRAM** availability (else 6.2 deferred; 6.1 is the gate).
-3. **Batch policy:** single‑sample `--def-stutter-model` for the first smoke test vs
-   requiring a ≥N‑sample batch for any trusted `f`. Proposed default: allow single‑sample
-   runs but **WARN** and treat `f` as provisional until a batch stutter model exists.
-4. **Exact prancSTR/HipSTR flag names** — locked in build step 1 (§1).
-5. Read length is auto‑detected per CRAM for the ceiling flag.
+## 8. Resolved decisions & remaining open item
+Resolved with the owner:
+- **Interruptions** — first‑class: P0 annotates from HipSTR ALT (`interruption_flag`);
+  full interruption‑aware sizing + anchor‑extension in P4; correlation with `f` in the
+  cohort tool (P1). Priority future loci: HTT, ATXN1, FMR1. ⟨pt 1⟩
+- **Validation** — simTR is the P0 gate here; real data runs in the owner's cloud via a
+  **portable container** (P0 deliverable). ⟨pt 2⟩
+- **Batch policy** — single‑sample `--def-stutter-model` allowed; `f` marked **provisional
+  (WARN)** until a batch stutter model exists. ⟨pt 3⟩
+- **Tool flags** — locked against installed versions in build step 1 (§1). ⟨pt 4⟩
+- **Read length** — derived from the target‑locus reads only; **no full‑CRAM scan**;
+  requires co‑located `.crai` + reachable reference (§4ter). ⟨pt 5⟩
+
+Remaining to confirm during build (not blocking):
+1. **HipSTR region defs** for the 4 loci — generate + validate against known genotypes;
+   ATXN7 compound `(GCA)*(GCC)+` structure and AR strand are the flagged risks (§3.1).

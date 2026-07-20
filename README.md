@@ -21,6 +21,13 @@ the container where the data lives.
 ## v1 loci
 TCF4 (CTG18.1), AR (SBMA, X-linked), DMPK (DM1), ATXN7 (SCA7) — GRCh38, `catalogs/somatiq_grch38.json`.
 
+> **Reference build:** GRCh38 only. **hg19 / GRCh37 is not supported or tested in
+> v0.1.0.** The shipped catalog carries GRCh38 coordinates; an hg19 catalog can be
+> added later but will not be validated in this version.
+
+Deployment on a VM without GitHub access (source archive, container, conda-pack, or
+Python-only): see `DEPLOY.md`.
+
 ## Install
 ```bash
 pip install -e .            # core (stdlib only)

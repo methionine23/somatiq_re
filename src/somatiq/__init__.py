@@ -9,4 +9,4 @@ and prancSTR, and CRAM read access via pysam, are thin wrappers run where the da
 lives.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"

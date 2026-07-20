@@ -1,0 +1,22 @@
+# Conda/mamba environment for somatiq_re (bundles the external callers).
+# Create:  conda env create -f environment.yml   (or: mamba env create -f ...)
+# Then:    conda activate somatiq_re && pip install --no-deps .
+# Pin for reproducibility / offline mirroring: conda env export > env.lock
+#
+# Reference build: GRCh38 only. hg19/GRCh37 is NOT supported or tested in v0.1.0
+# (the shipped catalog carries GRCh38 coordinates).
+name: somatiq_re
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - hipstr            # germline STR genotyping + stutter model + MALLREADS
+  - expansionhunter   # optional: pre-computed EH results for annotation only
+  - trtools           # provides prancSTR (somatic caller) + simTR (simulator)
+  - samtools
+  - htslib            # bgzip / tabix
+  - pysam             # targeted read-length detection
+  - pandas            # optional Parquet output
+  - pyarrow
+  - pip

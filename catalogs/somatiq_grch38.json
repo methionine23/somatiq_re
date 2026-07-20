@@ -1,7 +1,7 @@
 {
   "genome_build": "GRCh38",
   "chrom_style": "chr",
-  "_comment": "Coordinates/motifs from the Illumina ExpansionHunter GRCh38 catalog. ref_motif is the reference-strand unit (what HipSTR ALT sequences use); disease_motif is the conventional strand. hipstr_region.ref_copies are derived (region_len/period) and MUST be validated against known genotypes before a locus is trusted (see docs/P0_SPEC.md 3.1). chrom carries the 'chr' prefix; strip via --chr-style if the reference is unprefixed.",
+  "_comment": "GRCh38 ONLY; hg19/GRCh37 is not supported or tested in v0.1.0. Coordinates/motifs from the Illumina ExpansionHunter GRCh38 catalog. ref_motif is the reference-strand unit (what HipSTR ALT sequences use); disease_motif is the conventional strand. hipstr_region.ref_copies are derived (region_len/period) and MUST be validated against known genotypes before a locus is trusted (see docs/P0_SPEC.md 3.1). chrom carries the 'chr' prefix; strip via --chr-style if the reference is unprefixed.",
   "loci": [
     {
       "locus_id": "TCF4",
